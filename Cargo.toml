@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 atomic-wait = "1.1.0"
 mmapcell = "0.1.2"
+
+[dev-dependencies]
+rand = "0.8.5"
