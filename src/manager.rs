@@ -1,38 +1,37 @@
 use std::{
+    collections::VecDeque,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
-        Arc, RwLock,
+        Arc,
     },
 };
 
 use mmapcell::MmapCell;
+use parking_lot::RwLock;
 
 use crate::datapage::DataPage;
 
-const MAX_PAGES: usize = 3;
+const MAX_PAGES: usize = 100;
 
 #[derive(Clone)]
 pub struct DataPagesManager {
     path: PathBuf,
     datapage_count: Arc<AtomicUsize>,
-    datapage_ring: Arc<RwLock<[Arc<MmapCell<DataPage>>; MAX_PAGES]>>,
+    datapage_ring: Arc<RwLock<VecDeque<Arc<MmapCell<DataPage>>>>>,
 }
 
 impl DataPagesManager {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
         // TODO: actually get the page count
-        let total_page_count = MAX_PAGES;
+        let total_page_count = 0;
 
-        let mut init_pages = Vec::new();
-        for i in total_page_count - MAX_PAGES..total_page_count {
-            init_pages.push(Arc::new(DataPage::new(path.as_ref().join(i.to_string()))?));
-        }
-
-        let init_pages = match init_pages.try_into() {
-            Ok(init_pages) => init_pages,
-            Err(_) => panic!("init_pages had incorrect size, this should never fail"),
-        };
+        let mut init_pages = VecDeque::with_capacity(MAX_PAGES + 1);
+        init_pages.push_back(unsafe {
+            Arc::new(MmapCell::new_named(
+                path.as_ref().join(total_page_count.to_string()),
+            )?)
+        });
 
         Ok(DataPagesManager {
             path: path.as_ref().into(),
@@ -41,48 +40,46 @@ impl DataPagesManager {
         })
     }
 
+    pub fn get_last_datapage(&self) -> Result<(usize, Arc<MmapCell<DataPage>>), std::io::Error> {
+        let datapages = self.datapage_ring.read();
+        let last_datapage = datapages
+            .back()
+            .ok_or(std::io::Error::other("DataPage not found"))?;
+
+        let dp_count = self.datapage_count.load(Ordering::Relaxed);
+        Ok((dp_count, last_datapage.clone()))
+    }
+
     pub fn get_or_create_datapage(
         &self,
         num: usize,
     ) -> Result<(usize, Arc<MmapCell<DataPage>>), std::io::Error> {
-        let datapages = self.datapage_ring.read().expect("read lock");
+        let mut datapages = self.datapage_ring.upgradable_read();
         let dp_count = self.datapage_count.load(Ordering::Relaxed);
 
-        if num >= dp_count {
-            drop(datapages);
-            let mut datapages = self.datapage_ring.write().expect("write lock");
+        if num > dp_count {
+            return datapages.with_upgraded(|datapages| {
+                let dp_count = self.datapage_count.fetch_add(1, Ordering::Relaxed) + 1;
 
-            let dp_count = match self.datapage_count.load(Ordering::Relaxed) {
-                dp_count if num >= dp_count => {
-                    let dp_count = self.datapage_count.fetch_add(1, Ordering::Relaxed);
+                if dp_count >= MAX_PAGES {
+                    std::fs::remove_file(self.path.join(format!("{}", dp_count - MAX_PAGES)))?;
 
-                    datapages[dp_count % MAX_PAGES] =
-                        Arc::new(DataPage::new(self.path.join(dp_count.to_string()))?);
-
-                    std::fs::remove_file(
-                        self.path
-                            .join(format!("{}", dp_count.saturating_sub(MAX_PAGES))),
-                    )?;
-                    dp_count
+                    let _ = datapages.pop_front();
                 }
-                dp_count if num < dp_count => dp_count,
-                _ => unreachable!("num is neither >= or < somehow..."),
-            };
 
-            return Ok((dp_count, datapages[dp_count % MAX_PAGES].clone()));
+                datapages.push_back(Arc::new(DataPage::new(
+                    self.path.join(dp_count.to_string()),
+                )?));
+
+                Ok::<(usize, Arc<MmapCell<DataPage>>), std::io::Error>((
+                    dp_count,
+                    datapages[dp_count % MAX_PAGES].clone(),
+                ))
+            });
         }
 
-        let num = match num < dp_count.saturating_sub(MAX_PAGES) {
-            true => dp_count.saturating_sub(MAX_PAGES),
-            false => num,
-        };
+        let dp_count = num.max(dp_count.saturating_sub(MAX_PAGES));
 
-        Ok((num, datapages[num % MAX_PAGES].clone()))
+        Ok((dp_count, datapages[dp_count % MAX_PAGES].clone()))
     }
-
-    //pub fn get_latest_datapage(&self) -> Arc<MmapCell<DataPage>> {
-    //    let datapages = self.datapage_ring.read().expect("read lock");
-    //    let last_datapage = self.datapage_count.load(Ordering::Relaxed);
-    //    datapages[last_datapage % MAX_PAGES].clone()
-    //}
 }

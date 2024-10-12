@@ -10,11 +10,12 @@ type IdxType = u32;
 
 const IDX_SALT: u32 = 1;
 const MAX_RECEIVER_GROUPS: usize = 64;
-const MAX_MESSAGES_PER_PAGE: u32 = 2_u32.pow(16) - 1;
-const EXPECTED_MESSAGE_SIZE_BYTES: u32 = 4096;
+const MAX_MESSAGES_PER_PAGE: u32 = 2_u32.pow(28) - 1;
+const EXPECTED_MESSAGE_SIZE_BYTES: u32 = 16;
 const MAX_BYTES_PER_PAGE: u32 = MAX_MESSAGES_PER_PAGE * EXPECTED_MESSAGE_SIZE_BYTES;
 
 const WRITE_IDX_MASK: u64 = !(u32::MAX as u64);
+const COUNT_MASK: u64 = !WRITE_IDX_MASK;
 
 // u64 where the first 32 bits are used for the write_idx
 // and the last 32 bits are used for count
@@ -31,7 +32,7 @@ impl CountWriteIdx {
         atomic_wait::wake_all(unsafe { &*self.count });
 
         let write_idx = ((write_idx_count & WRITE_IDX_MASK) >> 32) as u32;
-        let count = (write_idx_count & WRITE_IDX_MASK) as u32;
+        let count = (write_idx_count & COUNT_MASK) as u32;
 
         (write_idx, count)
     }
@@ -63,7 +64,7 @@ impl DataPage {
     }
 
     pub fn push<T: AsRef<[u8]>>(&mut self, data: T) -> Result<(), DataPageFull> {
-        let (count, write_idx) = self
+        let (write_idx, count) = self
             .count_write_idx
             .fetch_add(data.as_ref().len() as u32 + Self::SIZE_OF_LEN as u32);
 
