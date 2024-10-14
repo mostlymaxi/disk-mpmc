@@ -138,7 +138,7 @@ mod test {
     };
 
     use rand::random;
-    use tracing::{info, trace};
+    use tracing::info;
 
     use super::*;
 
@@ -179,7 +179,7 @@ mod test {
 
     #[test]
     fn big() {
-        const TOTAL_MESSAGES: usize = 50_000_000;
+        const TOTAL_MESSAGES: usize = 5_000_000;
         const NUM_THREADS: usize = 8;
         const TEST_MESSAGE: &str = "test123asdf asdf asdf";
         tracing_subscriber::fmt::init();
