@@ -3,7 +3,7 @@ use std::{cell::RefCell, marker::PhantomData, sync::Arc};
 use mmapcell::MmapCell;
 
 mod datapage;
-mod manager;
+pub mod manager;
 
 use datapage::DataPage;
 use manager::DataPagesManager;
