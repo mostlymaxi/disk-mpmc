@@ -12,7 +12,7 @@ use parking_lot::RwLock;
 
 use crate::datapage::DataPage;
 
-const MAX_PAGES: usize = 100;
+const MAX_PAGES: usize = 3;
 
 #[derive(Clone)]
 pub struct DataPagesManager {
