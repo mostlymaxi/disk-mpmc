@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc, time::Duration};
 
 use mmapcell::MmapCell;
 
@@ -38,6 +38,25 @@ impl Receiver<Grouped> {
             datapage,
             _type: PhantomData,
         })
+    }
+
+    pub fn pop_with_timeout(&mut self, timeout: Duration) -> Result<Option<&[u8]>, std::io::Error> {
+        loop {
+            let count = self.datapage.get().increment_group_count(self.group, 1);
+
+            match self.datapage.get().get_with_timeout(count, timeout) {
+                Ok(data) => return Ok(data),
+                // WARN: if you add more errors in the future make sure to match on them!!!
+                Err(_e) => {}
+            };
+
+            let (dp_count, datapage) = self
+                .manager
+                .get_or_create_datapage(self.datapage_count.wrapping_add(1))?;
+
+            self.datapage_count = dp_count;
+            self.datapage = datapage;
+        }
     }
 
     pub fn pop(&mut self) -> Result<&[u8], std::io::Error> {

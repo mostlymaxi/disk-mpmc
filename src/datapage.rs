@@ -58,6 +58,9 @@ impl DataPage {
     const SIZE_OF_LEN: usize = size_of::<LenType>();
 
     pub fn increment_group_count(&self, group: usize, val: u32) -> u32 {
+        // maybe try waiting on the group count or something idk
+        // let count = self.receiver_group_count[group].load(Ordering::Relaxed);
+        // self.count_write_idx.count.wa
         self.receiver_group_count[group].fetch_add(val, Ordering::Release)
     }
 
@@ -148,7 +151,11 @@ impl DataPage {
         ))
     }
 
-    pub fn get_with_timeout(&self, count: u32, timeout: Duration) -> Result<&[u8], EndOfDataPage> {
+    pub fn get_with_timeout(
+        &self,
+        count: u32,
+        timeout: Duration,
+    ) -> Result<Option<&[u8]>, EndOfDataPage> {
         if count >= MAX_MESSAGES_PER_PAGE {
             return Err(EndOfDataPage);
         }
@@ -170,7 +177,7 @@ impl DataPage {
                 .value
                 .load(Ordering::Acquire)
             {
-                0 => continue,
+                0 => return Ok(None),
                 i => break i,
             }
         };
@@ -194,8 +201,10 @@ impl DataPage {
                 .expect("u32 is 4 bytes"),
         );
 
-        Ok(&self.buf
-            [idx as usize + Self::SIZE_OF_LEN..idx as usize + Self::SIZE_OF_LEN + len as usize])
+        Ok(Some(
+            &self.buf
+                [idx as usize + Self::SIZE_OF_LEN..idx as usize + Self::SIZE_OF_LEN + len as usize],
+        ))
     }
 
     pub fn get(&self, count: u32) -> Result<&[u8], EndOfDataPage> {
