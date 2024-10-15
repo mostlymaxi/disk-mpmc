@@ -1,6 +1,6 @@
 [package]
 name = "disk-mpmc"
-version = "0.1.1"
+version = "0.2.1"
 edition = "2021"
 authors = ["Maxi Saparov <maxi.saparov@gmail.com>"]
 description = "on-disk mpmc"

@@ -17,22 +17,22 @@ pub struct Anonymous;
 #[derive(Clone)]
 pub struct Receiver<T> {
     group: usize,
-    anon_count: RefCell<u32>,
+    anon_count: u32,
     manager: DataPagesManager,
-    datapage_count: RefCell<usize>,
-    datapage: RefCell<Arc<MmapCell<DataPage>>>,
+    datapage_count: usize,
+    datapage: Arc<MmapCell<DataPage>>,
     _type: std::marker::PhantomData<T>,
 }
 
 impl Receiver<Grouped> {
     pub fn new(group: usize, manager: DataPagesManager) -> Result<Self, std::io::Error> {
         let (datapage_count, datapage) = manager.get_or_create_datapage(0)?;
-        let datapage_count = RefCell::new(datapage_count);
-        let datapage = RefCell::new(datapage);
+        //let datapage_count = RefCell::new(datapage_count);
+        //let datapage = RefCell::new(datapage);
 
         Ok(Receiver {
             group,
-            anon_count: RefCell::new(0),
+            anon_count: 0,
             manager,
             datapage_count,
             datapage,
@@ -40,50 +40,46 @@ impl Receiver<Grouped> {
         })
     }
 
-    pub fn pop(&self) -> Result<&[u8], std::io::Error> {
+    pub fn pop(&mut self) -> Result<&[u8], std::io::Error> {
         loop {
-            let datapage = self.datapage.borrow();
-            let count = datapage.get().increment_group_count(self.group, 1);
+            let count = self.datapage.get().increment_group_count(self.group, 1);
 
-            match datapage.get().get(count) {
+            match self.datapage.get().get(count) {
                 Ok(data) => return Ok(data),
                 // WARN: if you add more errors in the future make sure to match on them!!!
                 Err(_e) => {}
             };
 
-            drop(datapage);
-
             let (dp_count, datapage) = self
                 .manager
-                .get_or_create_datapage(self.datapage_count.borrow().wrapping_add(1))?;
+                .get_or_create_datapage(self.datapage_count.wrapping_add(1))?;
 
-            *self.datapage_count.borrow_mut() = dp_count;
-            self.datapage.replace(datapage);
+            self.datapage_count = dp_count;
+            self.datapage = datapage;
         }
     }
 }
 
 impl Receiver<Anonymous> {
-    pub fn pop(&self) -> Result<&[u8], std::io::Error> {
+    pub fn pop(&mut self) -> Result<&[u8], std::io::Error> {
         loop {
-            let datapage = self.datapage.borrow();
-            let count = self.anon_count.borrow();
-            *self.anon_count.borrow_mut() += 1;
+            let count = self.anon_count;
+            self.anon_count += 1;
 
-            match datapage.get().get(*count) {
+            match self.datapage.get().get(count) {
                 Ok(data) => return Ok(data),
                 // WARN: if you add more errors in the future make sure to match on them!!!
                 Err(_e) => {}
             };
 
-            *self.anon_count.borrow_mut() = 0;
+            self.anon_count = 0;
 
             let (dp_count, datapage) = self
                 .manager
-                .get_or_create_datapage(self.datapage_count.borrow().wrapping_add(1))?;
+                .get_or_create_datapage(self.datapage_count.wrapping_add(1))?;
 
-            *self.datapage_count.borrow_mut() = dp_count;
-            self.datapage.replace(datapage);
+            self.datapage_count = dp_count;
+            self.datapage = datapage;
         }
     }
 }
@@ -159,7 +155,7 @@ mod test {
         const TEST_MESSAGE: &str = "test123asdf asdf asdf";
         let path = mkdir_random();
         let manager = DataPagesManager::new(&path).unwrap();
-        let rx = Receiver::new(0, manager.clone()).unwrap();
+        let mut rx = Receiver::new(0, manager.clone()).unwrap();
 
         let t = thread::spawn(move || {
             let msg = rx.pop().unwrap();
@@ -195,7 +191,7 @@ mod test {
 
         for _ in 0..NUM_THREADS {
             let tx_end_clone = tx_end.clone();
-            let rx_clone = rx.clone();
+            let mut rx_clone = rx.clone();
             let msgs_count_clone = msg_count.clone();
             let barrier_clone = barrier.clone();
 
