@@ -1,4 +1,4 @@
-use std::{cell::RefCell, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use mmapcell::MmapCell;
 
@@ -87,15 +87,15 @@ impl Receiver<Anonymous> {
 #[derive(Clone)]
 pub struct Sender {
     manager: DataPagesManager,
-    datapage_count: RefCell<usize>,
-    datapage: RefCell<Arc<MmapCell<DataPage>>>,
+    datapage_count: usize,
+    datapage: Arc<MmapCell<DataPage>>,
 }
 
 impl Sender {
     pub fn new(manager: DataPagesManager) -> Result<Self, std::io::Error> {
         let (datapage_count, datapage) = manager.get_or_create_datapage(0)?;
-        let datapage_count = RefCell::new(datapage_count);
-        let datapage = RefCell::new(datapage);
+        //let datapage_count = RefCell::new(datapage_count);
+        //let datapage = RefCell::new(datapage);
 
         Ok(Sender {
             manager,
@@ -104,19 +104,19 @@ impl Sender {
         })
     }
 
-    pub fn push<T: AsRef<[u8]>>(&self, data: T) -> Result<(), std::io::Error> {
+    pub fn push<T: AsRef<[u8]>>(&mut self, data: T) -> Result<(), std::io::Error> {
         loop {
-            match self.datapage.borrow().get_mut().push(&data) {
+            match self.datapage.get_mut().push(&data) {
                 Ok(()) => return Ok(()),
                 Err(_e) => {}
             }
 
             let (dp_count, datapage) = self
                 .manager
-                .get_or_create_datapage(self.datapage_count.borrow().wrapping_add(1))?;
+                .get_or_create_datapage(self.datapage_count.wrapping_add(1))?;
 
-            *self.datapage_count.borrow_mut() = dp_count;
-            self.datapage.replace(datapage);
+            self.datapage_count = dp_count;
+            self.datapage = datapage;
         }
     }
 }
@@ -164,7 +164,7 @@ mod test {
 
         thread::sleep(std::time::Duration::from_millis(100));
 
-        let tx = Sender::new(manager).unwrap();
+        let mut tx = Sender::new(manager).unwrap();
         tx.push(TEST_MESSAGE).unwrap();
 
         let e = t.join();
@@ -217,7 +217,7 @@ mod test {
         let tx = Sender::new(manager).unwrap();
 
         for _ in 0..NUM_THREADS {
-            let tx_clone = tx.clone();
+            let mut tx_clone = tx.clone();
             let barrier_clone = barrier.clone();
 
             handles.push(thread::spawn(move || {
