@@ -235,6 +235,6 @@ mod test {
         let elapsed = now.elapsed().as_millis();
         info!("wrote {} in {} milliseconds", TOTAL_MESSAGES, elapsed);
 
-        // std::fs::emove_dir_all(path).unwrap();
+        std::fs::remove_dir_all(path).unwrap();
     }
 }

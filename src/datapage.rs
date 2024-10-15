@@ -102,6 +102,38 @@ impl DataPage {
         Ok(())
     }
 
+    pub fn try_get(&self, count: u32) -> Result<Option<&[u8]>, EndOfDataPage> {
+        if count >= MAX_MESSAGES_PER_PAGE {
+            return Err(EndOfDataPage);
+        }
+
+        let idx_with_salt = match self.idx_map_with_salt[count as usize].load(Ordering::Acquire) {
+            0 => return Ok(None),
+            i => i,
+        };
+
+        if idx_with_salt >= MAX_BYTES_PER_PAGE {
+            let next_count = count.saturating_add(1);
+
+            self.idx_map_with_salt[next_count as usize].store(u32::MAX, Ordering::Release);
+            atomic_wait::wake_all(&self.idx_map_with_salt[next_count as usize]);
+            return Err(EndOfDataPage);
+        }
+
+        let idx = idx_with_salt.saturating_sub(IDX_SALT);
+
+        let len = LenType::from_le_bytes(
+            self.buf[idx as usize..idx as usize + Self::SIZE_OF_LEN]
+                .try_into()
+                .expect("u32 is 4 bytes"),
+        );
+
+        Ok(Some(
+            &self.buf
+                [idx as usize + Self::SIZE_OF_LEN..idx as usize + Self::SIZE_OF_LEN + len as usize],
+        ))
+    }
+
     pub fn get(&self, count: u32) -> Result<&[u8], EndOfDataPage> {
         if count >= MAX_MESSAGES_PER_PAGE {
             return Err(EndOfDataPage);
