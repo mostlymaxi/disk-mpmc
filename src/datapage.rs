@@ -13,7 +13,11 @@ type IdxType = u32;
 const IDX_SALT: u32 = 1;
 const MAX_RECEIVER_GROUPS: usize = 64;
 const MAX_MESSAGES_PER_PAGE: u32 = 2_u32.pow(16) - 1;
-const EXPECTED_MESSAGE_SIZE_BYTES: u32 = 2048;
+const DP_BUILD_EMSG_SIZE: &str = match option_env!("FRANZ_BUILD_EMSG_SIZE") {
+    Some(m) => m,
+    None => "2048",
+};
+const EXPECTED_MESSAGE_SIZE_BYTES: u32 = const_str::parse!(DP_BUILD_EMSG_SIZE, u32);
 const MAX_BYTES_PER_PAGE: u32 = MAX_MESSAGES_PER_PAGE * EXPECTED_MESSAGE_SIZE_BYTES;
 
 const WRITE_IDX_MASK: u64 = !(u32::MAX as u64);
@@ -23,7 +27,7 @@ const COUNT_MASK: u64 = !WRITE_IDX_MASK;
 // and the last 32 bits are used for count
 union CountWriteIdx {
     write_idx: std::mem::ManuallyDrop<AtomicU64>,
-    count: std::mem::ManuallyDrop<AtomicU32>,
+    _count: std::mem::ManuallyDrop<AtomicU32>,
 }
 
 impl CountWriteIdx {
@@ -31,7 +35,7 @@ impl CountWriteIdx {
         let val = val as u64;
         let write_idx_count =
             unsafe { self.write_idx.fetch_add((val << 32) + 1, Ordering::Release) };
-        atomic_wait::wake_one(unsafe { &*self.count });
+        // atomic_wait::wake_one(unsafe { &*self.count });
 
         let write_idx = ((write_idx_count & WRITE_IDX_MASK) >> 32) as u32;
         let count = (write_idx_count & COUNT_MASK) as u32;
@@ -160,7 +164,9 @@ impl DataPage {
             return Err(EndOfDataPage);
         }
 
-        let idx_with_salt = loop {
+        // why does this look like this??
+        // stfu it used to be a loop
+        let idx_with_salt = 'out: {
             // futex man pages seem to imply
             // we should check the value prior
             // to doing the syscall idrk
@@ -169,7 +175,7 @@ impl DataPage {
                 .load(Ordering::Acquire)
             {
                 0 => {}
-                i => break i,
+                i => break 'out i,
             }
 
             let _ = self.idx_map_with_salt[count as usize].wait_for(0, timeout);
@@ -178,7 +184,7 @@ impl DataPage {
                 .load(Ordering::Acquire)
             {
                 0 => return Ok(None),
-                i => break i,
+                i => break 'out i,
             }
         };
 
