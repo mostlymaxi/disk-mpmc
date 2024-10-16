@@ -13,7 +13,7 @@ type IdxType = u32;
 const IDX_SALT: u32 = 1;
 const MAX_RECEIVER_GROUPS: usize = 64;
 const MAX_MESSAGES_PER_PAGE: u32 = 2_u32.pow(16) - 1;
-const DP_BUILD_EMSG_SIZE: &str = match option_env!("FRANZ_BUILD_EMSG_SIZE") {
+const DP_BUILD_EMSG_SIZE: &str = match option_env!("DP_BUILD_EMSG_SIZE") {
     Some(m) => m,
     None => "2048",
 };
