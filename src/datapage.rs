@@ -21,8 +21,8 @@ const DP_BUILD_EMSG_SIZE: &str = match option_env!("DP_BUILD_EMSG_SIZE") {
 
 const EXPECTED_MESSAGE_SIZE_BYTES: u32 = const_str::parse!(DP_BUILD_EMSG_SIZE, u32) + 4;
 const _: () = assert!(
-    EXPECTED_MESSAGE_SIZE_BYTES <= 2_u32.pow(16) - 3,
-    "EMSG_SIZE must be less than 2^32 - 3"
+    EXPECTED_MESSAGE_SIZE_BYTES < 2_u32.pow(16),
+    "EMSG_SIZE must be less than 2^32 - 5"
 );
 
 const MAX_BYTES_PER_PAGE: u32 = MAX_MESSAGES_PER_PAGE * EXPECTED_MESSAGE_SIZE_BYTES;
