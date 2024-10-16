@@ -13,11 +13,18 @@ type IdxType = u32;
 const IDX_SALT: u32 = 1;
 const MAX_RECEIVER_GROUPS: usize = 64;
 const MAX_MESSAGES_PER_PAGE: u32 = 2_u32.pow(16) - 1;
+
 const DP_BUILD_EMSG_SIZE: &str = match option_env!("DP_BUILD_EMSG_SIZE") {
     Some(m) => m,
     None => "2048",
 };
-const EXPECTED_MESSAGE_SIZE_BYTES: u32 = const_str::parse!(DP_BUILD_EMSG_SIZE, u32);
+
+const EXPECTED_MESSAGE_SIZE_BYTES: u32 = const_str::parse!(DP_BUILD_EMSG_SIZE, u32) + 4;
+const _: () = assert!(
+    EXPECTED_MESSAGE_SIZE_BYTES <= 2_u32.pow(16) - 3,
+    "EMSG_SIZE must be less than 2^32 - 3"
+);
+
 const MAX_BYTES_PER_PAGE: u32 = MAX_MESSAGES_PER_PAGE * EXPECTED_MESSAGE_SIZE_BYTES;
 
 const WRITE_IDX_MASK: u64 = !(u32::MAX as u64);
