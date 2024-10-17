@@ -250,6 +250,10 @@ impl DataPage {
         if idx_with_salt >= MAX_BYTES_PER_PAGE {
             let next_count = count.saturating_add(1);
 
+            if next_count >= MAX_MESSAGES_PER_PAGE {
+                return Err(EndOfDataPage);
+            }
+
             self.idx_map_with_salt[next_count as usize]
                 .value
                 .store(u32::MAX, Ordering::Release);

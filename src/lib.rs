@@ -170,33 +170,56 @@ mod test {
     }
 
     #[test]
-    fn send_receive_test() {
-        const TEST_MESSAGE: &str = "test123asdf asdf asdf";
+    fn sequential_test() {
+        const TEST_MESSAGE: &str = const_str::repeat!("a", 100);
+
+        tracing_subscriber::fmt::init();
+
         let path = mkdir_random();
         let manager = DataPagesManager::new(&path).unwrap();
-        let mut rx = Receiver::new(0, manager.clone()).unwrap();
 
-        let t = thread::spawn(move || {
-            let msg = rx.pop().unwrap();
-            assert!(String::from_utf8_lossy(msg).eq(TEST_MESSAGE));
-        });
+        let mut tx = Sender::new(manager.clone()).unwrap();
+        let now = Instant::now();
 
-        thread::sleep(std::time::Duration::from_millis(100));
+        for _ in 0..50_000_000 {
+            tx.push(TEST_MESSAGE).unwrap();
+        }
+        let elapsed = now.elapsed();
 
-        let mut tx = Sender::new(manager).unwrap();
-        tx.push(TEST_MESSAGE).unwrap();
+        let test_msg_bytes = TEST_MESSAGE.as_bytes().len() * 50_000_000;
+        let test_msg_mb = test_msg_bytes as f64 * 0.000001;
+        info!(
+            "pushed 50,000,000 messages ({:.2} MB) in {} ms [{:.2}MB/s]",
+            test_msg_mb,
+            elapsed.as_millis(),
+            test_msg_bytes as f64 / elapsed.as_micros() as f64
+        );
 
-        let e = t.join();
+        let mut rx = Receiver::new(0, manager).unwrap();
+        let now = Instant::now();
+        for _ in 0..50_000_000 {
+            rx.pop().unwrap();
+        }
+        let elapsed = now.elapsed();
+
+        let test_msg_bytes = TEST_MESSAGE.as_bytes().len() * 50_000_000;
+        let test_msg_mb = test_msg_bytes as f64 * 0.000001;
+        info!(
+            "popped 50,000,000 messages ({:.2} MB) in {} ms [{:.2}MB/s]",
+            test_msg_mb,
+            elapsed.as_millis(),
+            test_msg_bytes as f64 / elapsed.as_micros() as f64
+        );
+
         std::fs::remove_dir_all(path).unwrap();
-
-        e.unwrap();
     }
 
     #[test]
-    fn big() {
-        const TOTAL_MESSAGES: usize = 5_000_000;
-        const NUM_THREADS: usize = 8;
-        const TEST_MESSAGE: &str = "test123asdf asdf asdf";
+    fn spsc_test() {
+        const TOTAL_MESSAGES: usize = 50_000_000;
+        const NUM_THREADS: usize = 1;
+        const TEST_MESSAGE: &str = const_str::repeat!("a", 100);
+
         tracing_subscriber::fmt::init();
 
         let path = mkdir_random();
@@ -251,8 +274,90 @@ mod test {
         barrier.wait();
         let now = Instant::now();
         let _ = rx_end.recv();
-        let elapsed = now.elapsed().as_millis();
-        info!("wrote {} in {} milliseconds", TOTAL_MESSAGES, elapsed);
+
+        let elapsed = now.elapsed();
+        let test_msg_bytes = TEST_MESSAGE.as_bytes().len() * 50_000_000;
+        let test_msg_mb = test_msg_bytes as f64 * 0.000001;
+        info!(
+            "pushed & popped 50,000,000 messages ({:.2} MB) in {} ms [{:.2}MB/s]",
+            test_msg_mb,
+            elapsed.as_millis(),
+            test_msg_bytes as f64 / elapsed.as_micros() as f64
+        );
+
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn mpmc_test() {
+        const TOTAL_MESSAGES: usize = 50_000_000;
+        const NUM_THREADS: usize = 8;
+        const TEST_MESSAGE: &str = const_str::repeat!("a", 100);
+
+        tracing_subscriber::fmt::init();
+
+        let path = mkdir_random();
+        let manager = DataPagesManager::new(&path).unwrap();
+        let rx = Receiver::new(0, manager.clone()).unwrap();
+        let (tx_end, rx_end) = mpsc::sync_channel(1);
+
+        let mut handles = Vec::new();
+        let msg_count = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(Barrier::new(NUM_THREADS * 2 + 1));
+
+        for _ in 0..NUM_THREADS {
+            let tx_end_clone = tx_end.clone();
+            let mut rx_clone = rx.clone();
+            let msgs_count_clone = msg_count.clone();
+            let barrier_clone = barrier.clone();
+
+            handles.push(thread::spawn(move || {
+                barrier_clone.wait();
+
+                loop {
+                    let m = msgs_count_clone.load(Ordering::Relaxed);
+
+                    if m == TOTAL_MESSAGES {
+                        break;
+                    }
+
+                    let msg = rx_clone.pop().unwrap(); // blocking
+                    assert!(String::from_utf8_lossy(msg).eq(TEST_MESSAGE));
+                    msgs_count_clone.fetch_add(1, Ordering::Relaxed);
+                }
+
+                let _ = tx_end_clone.send(());
+            }));
+        }
+
+        let tx = Sender::new(manager).unwrap();
+
+        for _ in 0..NUM_THREADS {
+            let mut tx_clone = tx.clone();
+            let barrier_clone = barrier.clone();
+
+            handles.push(thread::spawn(move || {
+                barrier_clone.wait();
+
+                for _ in 0..TOTAL_MESSAGES / NUM_THREADS {
+                    tx_clone.push(TEST_MESSAGE).unwrap();
+                }
+            }));
+        }
+
+        barrier.wait();
+        let now = Instant::now();
+        let _ = rx_end.recv();
+
+        let elapsed = now.elapsed();
+        let test_msg_bytes = TEST_MESSAGE.as_bytes().len() * 50_000_000;
+        let test_msg_mb = test_msg_bytes as f64 * 0.000001;
+        info!(
+            "pushed & popped 50,000,000 messages ({:.2} MB) in {} ms [{:.2}MB/s]",
+            test_msg_mb,
+            elapsed.as_millis(),
+            test_msg_bytes as f64 / elapsed.as_micros() as f64
+        );
 
         std::fs::remove_dir_all(path).unwrap();
     }
