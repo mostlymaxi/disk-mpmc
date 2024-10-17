@@ -361,4 +361,69 @@ mod test {
 
         std::fs::remove_dir_all(path).unwrap();
     }
+
+    #[test]
+    fn two_topics() {
+        const TOTAL_MESSAGES: usize = 50_000_000;
+        const NUM_THREADS: usize = 1;
+        const TEST_MESSAGE: &str = const_str::repeat!("a", 100);
+
+        tracing_subscriber::fmt::init();
+
+        let path = mkdir_random();
+        let path2 = mkdir_random();
+        let manager1 = DataPagesManager::new(&path).unwrap();
+        let manager2 = DataPagesManager::new(&path2).unwrap();
+
+        let mut handles = Vec::new();
+        let barrier = Arc::new(Barrier::new(NUM_THREADS * 2 + 1));
+
+        let tx = Sender::new(manager1).unwrap();
+        let tx2 = Sender::new(manager2).unwrap();
+
+        for _ in 0..NUM_THREADS {
+            let mut tx_clone = tx.clone();
+            let barrier_clone = barrier.clone();
+
+            handles.push(thread::spawn(move || {
+                barrier_clone.wait();
+
+                for _ in 0..TOTAL_MESSAGES / NUM_THREADS {
+                    tx_clone.push(TEST_MESSAGE).unwrap();
+                }
+            }));
+        }
+
+        for _ in 0..NUM_THREADS {
+            let mut tx_clone = tx2.clone();
+            let barrier_clone = barrier.clone();
+
+            handles.push(thread::spawn(move || {
+                barrier_clone.wait();
+
+                for _ in 0..TOTAL_MESSAGES / NUM_THREADS {
+                    tx_clone.push(TEST_MESSAGE).unwrap();
+                }
+            }));
+        }
+
+        barrier.wait();
+
+        let now = Instant::now();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let elapsed = now.elapsed();
+        let test_msg_bytes = TEST_MESSAGE.as_bytes().len() * 100_000_000;
+        let test_msg_mb = test_msg_bytes as f64 * 0.000001;
+        info!(
+            "pushed 100,000,000 messages ({:.2} MB) in {} ms [{:.2}MB/s]",
+            test_msg_mb,
+            elapsed.as_millis(),
+            test_msg_bytes as f64 / elapsed.as_micros() as f64
+        );
+
+        std::fs::remove_dir_all(path).unwrap();
+    }
 }
