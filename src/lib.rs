@@ -140,6 +140,8 @@ impl Sender {
     }
 }
 
+// TODO: Move these out to a test dir
+// they take up wayyyy too much space
 #[cfg(test)]
 mod test {
     use std::{
