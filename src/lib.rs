@@ -24,6 +24,10 @@ pub struct Receiver<T> {
     _type: std::marker::PhantomData<T>,
 }
 
+pub trait GenReceiver {
+    fn pop(&mut self) -> Result<&[u8], std::io::Error>;
+}
+
 impl Receiver<Grouped> {
     pub fn new(group: usize, manager: DataPagesManager) -> Result<Self, std::io::Error> {
         let (datapage_count, datapage) = manager.get_or_create_datapage(0)?;
@@ -58,8 +62,9 @@ impl Receiver<Grouped> {
             self.datapage = datapage;
         }
     }
-
-    pub fn pop(&mut self) -> Result<&[u8], std::io::Error> {
+}
+impl GenReceiver for Receiver<Grouped> {
+    fn pop(&mut self) -> Result<&[u8], std::io::Error> {
         loop {
             let count = self.datapage.get().increment_group_count(self.group, 1);
 
@@ -83,8 +88,10 @@ impl Receiver<Anonymous> {
     pub fn new_anon(manager: DataPagesManager) -> Result<Self, std::io::Error> {
         Ok(Receiver::new(0, manager)?.into())
     }
+}
 
-    pub fn pop(&mut self) -> Result<&[u8], std::io::Error> {
+impl GenReceiver for Receiver<Anonymous> {
+    fn pop(&mut self) -> Result<&[u8], std::io::Error> {
         loop {
             let count = self.anon_count;
             self.anon_count += 1;
