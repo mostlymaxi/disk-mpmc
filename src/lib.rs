@@ -80,6 +80,10 @@ impl Receiver<Grouped> {
 }
 
 impl Receiver<Anonymous> {
+    pub fn new_anon(manager: DataPagesManager) -> Result<Self, std::io::Error> {
+        Ok(Receiver::new(0, manager)?.into())
+    }
+
     pub fn pop(&mut self) -> Result<&[u8], std::io::Error> {
         loop {
             let count = self.anon_count;
@@ -99,6 +103,19 @@ impl Receiver<Anonymous> {
 
             self.datapage_count = dp_count;
             self.datapage = datapage;
+        }
+    }
+}
+
+impl From<Receiver<Grouped>> for Receiver<Anonymous> {
+    fn from(value: Receiver<Grouped>) -> Self {
+        Receiver {
+            group: 0,
+            anon_count: 0,
+            manager: value.manager,
+            datapage_count: value.datapage_count,
+            datapage: value.datapage,
+            _type: PhantomData,
         }
     }
 }
