@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    ffi::OsStr,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -20,18 +21,24 @@ pub struct DataPagesManager {
     datapage_ring: Arc<RwLock<VecDeque<Arc<MmapCell<DataPage>>>>>,
 }
 
+const DATAPAGE_FILE_STEM: &str = ".dp.data.maxi";
+
 impl DataPagesManager {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
         // TODO: actually get the page count
-        let total_page_count = 0;
+        let total_page_count = Self::load_total_page_count(path.as_ref())?;
+        let max_page_count = Self::load_max_page(path.as_ref())?;
 
-        // let mut init_pages = VecDeque::with_capacity(MAX_PAGES + 1);
         let mut init_pages = VecDeque::new();
-        init_pages.push_back(unsafe {
-            Arc::new(MmapCell::new_named(
-                path.as_ref().join(total_page_count.to_string()),
-            )?)
-        });
+        for i in max_page_count.saturating_sub(total_page_count)..max_page_count + 1 {
+            init_pages.push_back(unsafe {
+                Arc::new(MmapCell::new_named(
+                    path.as_ref()
+                        .join(DATAPAGE_FILE_STEM)
+                        .with_extension(i.to_string()),
+                )?)
+            });
+        }
 
         Ok(DataPagesManager {
             path: path.as_ref().into(),
@@ -41,7 +48,25 @@ impl DataPagesManager {
         })
     }
 
-    fn load_total_page_count<P: AsRef<Path>>(path: P) {}
+    fn load_total_page_count<P: AsRef<Path>>(path: P) -> Result<usize, std::io::Error> {
+        Ok(std::fs::read_dir(path)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().file_stem() == Some(OsStr::new(DATAPAGE_FILE_STEM)))
+            .count())
+    }
+
+    fn load_max_page<P: AsRef<Path>>(path: P) -> Result<usize, std::io::Error> {
+        Ok(std::fs::read_dir(path)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().file_stem() == Some(OsStr::new(DATAPAGE_FILE_STEM)))
+            .filter_map(|e| {
+                e.path()
+                    .extension()
+                    .and_then(|s| s.to_str().and_then(|s| s.parse().ok()))
+            })
+            .max()
+            .unwrap_or(0))
+    }
 
     pub fn set_max_datapages(&mut self, val: usize) {
         let _dp = self.datapage_ring.write();
@@ -76,13 +101,19 @@ impl DataPagesManager {
                 let max_dps = self.max_datapages.load(Ordering::Relaxed);
 
                 if dp_count >= max_dps {
-                    std::fs::remove_file(self.path.join(format!("{}", dp_count - max_dps)))?;
+                    std::fs::remove_file(
+                        self.path
+                            .join(DATAPAGE_FILE_STEM)
+                            .with_extension((dp_count - max_dps).to_string()),
+                    )?;
 
                     let _ = datapages.pop_front();
                 }
 
                 datapages.push_back(Arc::new(DataPage::new(
-                    self.path.join(dp_count.to_string()),
+                    self.path
+                        .join(DATAPAGE_FILE_STEM)
+                        .with_extension(dp_count.to_string()),
                 )?));
 
                 Ok::<(usize, Arc<MmapCell<DataPage>>), std::io::Error>((

@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, sync::Arc, time::Duration};
+use std::{marker::PhantomData, sync::Arc};
 
 use mmapcell::MmapCell;
 
@@ -31,8 +31,6 @@ pub trait GenReceiver {
 impl Receiver<Grouped> {
     pub fn new(group: usize, manager: DataPagesManager) -> Result<Self, std::io::Error> {
         let (datapage_count, datapage) = manager.get_or_create_datapage(0)?;
-        //let datapage_count = RefCell::new(datapage_count);
-        //let datapage = RefCell::new(datapage);
 
         Ok(Receiver {
             group,
@@ -43,26 +41,8 @@ impl Receiver<Grouped> {
             _type: PhantomData,
         })
     }
-
-    pub fn pop_with_timeout(&mut self, timeout: Duration) -> Result<Option<&[u8]>, std::io::Error> {
-        loop {
-            let count = self.datapage.get().increment_group_count(self.group, 1);
-
-            match self.datapage.get().get_with_timeout(count, timeout) {
-                Ok(data) => return Ok(data),
-                // WARN: if you add more errors in the future make sure to match on them!!!
-                Err(_e) => {}
-            };
-
-            let (dp_count, datapage) = self
-                .manager
-                .get_or_create_datapage(self.datapage_count.wrapping_add(1))?;
-
-            self.datapage_count = dp_count;
-            self.datapage = datapage;
-        }
-    }
 }
+
 impl GenReceiver for Receiver<Grouped> {
     fn pop(&mut self) -> Result<&[u8], std::io::Error> {
         loop {
@@ -237,7 +217,7 @@ mod test {
             test_msg_bytes as f64 / elapsed.as_micros() as f64
         );
 
-        std::fs::remove_dir_all(path).unwrap();
+        // std::fs::remove_dir_all(path).unwrap();
     }
 
     #[test]

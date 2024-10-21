@@ -1,10 +1,8 @@
 use std::{
     path::Path,
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
-    time::Duration,
 };
 
-use linux_futex::{Futex, Private};
 use mmapcell::MmapCell;
 
 type LenType = u32;
@@ -61,7 +59,7 @@ pub struct EndOfDataPage;
 pub struct DataPage {
     count_write_idx: CountWriteIdx,
     receiver_group_count: [AtomicU32; MAX_RECEIVER_GROUPS],
-    idx_map_with_salt: [Futex<Private>; MAX_MESSAGES_PER_PAGE as usize],
+    idx_map_with_salt: [AtomicU32; MAX_MESSAGES_PER_PAGE as usize],
     buf: [u8; MAX_BYTES_PER_PAGE as usize],
 }
 
@@ -98,11 +96,8 @@ impl DataPage {
         // readers are waiting. (there might still be a race condition here
         // but i'm kinda over it)
         if write_idx + full_msg_len >= MAX_BYTES_PER_PAGE {
-            self.idx_map_with_salt[count as usize]
-                .value
-                .store(u32::MAX, Ordering::Release);
-
-            self.idx_map_with_salt[count as usize].wake(i32::MAX);
+            self.idx_map_with_salt[count as usize].store(u32::MAX, Ordering::Release);
+            atomic_wait::wake_all(&self.idx_map_with_salt[count as usize]);
 
             return Err(DataPageFull);
         }
@@ -115,10 +110,9 @@ impl DataPage {
             .copy_from_slice(data.as_ref());
 
         self.idx_map_with_salt[count as usize]
-            .value
             .store(write_idx as IdxType + IDX_SALT, Ordering::Release);
 
-        self.idx_map_with_salt[count as usize].wake(i32::MAX);
+        atomic_wait::wake_all(&self.idx_map_with_salt[count as usize]);
 
         Ok(())
     }
@@ -128,10 +122,7 @@ impl DataPage {
             return Err(EndOfDataPage);
         }
 
-        let idx_with_salt = match self.idx_map_with_salt[count as usize]
-            .value
-            .load(Ordering::Acquire)
-        {
+        let idx_with_salt = match self.idx_map_with_salt[count as usize].load(Ordering::Acquire) {
             0 => return Ok(None),
             i => i,
         };
@@ -139,70 +130,10 @@ impl DataPage {
         if idx_with_salt >= MAX_BYTES_PER_PAGE {
             let next_count = count.saturating_add(1);
 
-            self.idx_map_with_salt[next_count as usize]
-                .value
-                .store(u32::MAX, Ordering::Release);
+            self.idx_map_with_salt[next_count as usize].store(u32::MAX, Ordering::Release);
 
-            self.idx_map_with_salt[next_count as usize].wake(i32::MAX);
+            atomic_wait::wake_all(&self.idx_map_with_salt[next_count as usize]);
 
-            return Err(EndOfDataPage);
-        }
-
-        let idx = idx_with_salt.saturating_sub(IDX_SALT);
-
-        let len = LenType::from_le_bytes(
-            self.buf[idx as usize..idx as usize + Self::SIZE_OF_LEN]
-                .try_into()
-                .expect("u32 is 4 bytes"),
-        );
-
-        Ok(Some(
-            &self.buf
-                [idx as usize + Self::SIZE_OF_LEN..idx as usize + Self::SIZE_OF_LEN + len as usize],
-        ))
-    }
-
-    pub fn get_with_timeout(
-        &self,
-        count: u32,
-        timeout: Duration,
-    ) -> Result<Option<&[u8]>, EndOfDataPage> {
-        if count >= MAX_MESSAGES_PER_PAGE {
-            return Err(EndOfDataPage);
-        }
-
-        // why does this look like this??
-        // stfu it used to be a loop
-        let idx_with_salt = 'out: {
-            // futex man pages seem to imply
-            // we should check the value prior
-            // to doing the syscall idrk
-            match self.idx_map_with_salt[count as usize]
-                .value
-                .load(Ordering::Acquire)
-            {
-                0 => {}
-                i => break 'out i,
-            }
-
-            let _ = self.idx_map_with_salt[count as usize].wait_for(0, timeout);
-            match self.idx_map_with_salt[count as usize]
-                .value
-                .load(Ordering::Acquire)
-            {
-                0 => return Ok(None),
-                i => break 'out i,
-            }
-        };
-
-        if idx_with_salt >= MAX_BYTES_PER_PAGE {
-            let next_count = count.saturating_add(1);
-
-            self.idx_map_with_salt[next_count as usize]
-                .value
-                .store(u32::MAX, Ordering::Release);
-
-            self.idx_map_with_salt[next_count as usize].wake(i32::MAX);
             return Err(EndOfDataPage);
         }
 
@@ -225,26 +156,12 @@ impl DataPage {
             return Err(EndOfDataPage);
         }
 
-        let idx_with_salt = loop {
-            // futex man pages seem to imply
-            // we should check the value prior
-            // to doing the syscall idrk
-            match self.idx_map_with_salt[count as usize]
-                .value
-                .load(Ordering::Acquire)
-            {
-                0 => {}
-                i => break i,
+        let idx_with_salt = match self.idx_map_with_salt[count as usize].load(Ordering::Acquire) {
+            0 => {
+                atomic_wait::wait(&self.idx_map_with_salt[count as usize], 0);
+                self.idx_map_with_salt[count as usize].load(Ordering::Acquire)
             }
-
-            let _ = self.idx_map_with_salt[count as usize].wait(0);
-            match self.idx_map_with_salt[count as usize]
-                .value
-                .load(Ordering::Acquire)
-            {
-                0 => continue,
-                i => break i,
-            }
+            i => i,
         };
 
         if idx_with_salt >= MAX_BYTES_PER_PAGE {
@@ -254,11 +171,9 @@ impl DataPage {
                 return Err(EndOfDataPage);
             }
 
-            self.idx_map_with_salt[next_count as usize]
-                .value
-                .store(u32::MAX, Ordering::Release);
+            self.idx_map_with_salt[next_count as usize].store(u32::MAX, Ordering::Release);
 
-            self.idx_map_with_salt[next_count as usize].wake(i32::MAX);
+            atomic_wait::wake_all(&self.idx_map_with_salt[next_count as usize]);
             return Err(EndOfDataPage);
         }
 
